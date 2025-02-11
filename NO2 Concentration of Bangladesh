@@ -1,0 +1,23 @@
+var no2 = ee.ImageCollection("COPERNICUS/S5P/NRTI/L3_NO2")
+
+var image = no2.filterDate('2024-06-01' , '2025-01-30')
+          .select('NO2_column_number_density')
+          .mean()
+          .clip(BD)
+var band_viz = {
+  min: 0,
+  max: 0.0002,
+  palette: ['black', 'blue', 'purple', 'cyan', 'green', 'yellow', 'red']
+};
+
+Map.addLayer (image, band_viz)
+Map.centerObject (BD, 10)
+
+//exporting section
+Export.image.toDrive({
+  image: image,
+  description: 'NO2 quality',
+  scale: 30,
+  region: BD,
+  maxPixels: 1e13
+})

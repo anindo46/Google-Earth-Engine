@@ -1,0 +1,41 @@
+// Load CHIRPS precipitation dataset
+var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
+  .filterDate('2024-01-01', '2024-12-31')
+  .select('precipitation');
+
+// Calculate the annual sum of precipitation
+var annualPrecipitation = chirps.sum();
+
+// Load FAO GAUL dataset for country boundaries
+var countries = ee.FeatureCollection("FAO/GAUL/2015/level0");
+
+// Filter for Bangladesh
+var bangladesh = countries.filter(ee.Filter.eq('ADM0_NAME', 'Bangladesh'));
+
+// Clip the precipitation data to the Bangladesh boundary
+var clippedPrecipitation = annualPrecipitation.clip(bangladesh);
+
+// Define visualization parameters
+var precipitationVis = {
+  min: 0,
+  max: 2000,
+  palette: ['white', 'blue', 'cyan', 'green', 'yellow', 'red']
+};
+
+// Add the clipped precipitation layer to the map
+Map.centerObject(bangladesh, 5);
+Map.addLayer(clippedPrecipitation, precipitationVis, 'Annual Precipitation (mm)');
+
+// Export the clipped precipitation as a GeoTIFF file to Google Drive
+Export.image.toDrive({
+  image: clippedPrecipitation,
+  description: 'Bangladesh_Annual_Precipitation_2024',
+  folder: 'GEE_Exports',  // Change this to your preferred Google Drive folder
+  fileNamePrefix: 'Bangladesh_Annual_Precipitation_2024',
+  scale: 5000,  // Adjust scale as needed (smaller values = higher resolution)
+  region: bangladesh.geometry(),  
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13  // Adjust max pixels if needed
+});
+
+print('Exporting to Google Drive... Check the "Tasks" tab to start the export.');

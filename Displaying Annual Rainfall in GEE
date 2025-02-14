@@ -1,6 +1,6 @@
 // Load CHIRPS precipitation dataset
 var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
-  .filterDate('2024-01-01', '2024-12-31')
+  .filterDate('2023-01-01', '2023-12-31')  // Updated for 2024
   .select('precipitation');
 
 // Calculate the annual sum of precipitation
@@ -14,26 +14,38 @@ var bangladesh = countries.filter(ee.Filter.eq('ADM0_NAME', 'Bangladesh'));
 
 // Display Bangladesh boundary
 Map.centerObject(bangladesh, 6);
-Map.addLayer(bangladesh.style({color: 'red', width: 1}), {}, 'Bangladesh Boundary');
+Map.addLayer(bangladesh.style({color: 'black', width: 1.5}), {}, 'Bangladesh Boundary');
 
 // Clip the precipitation data to the Bangladesh boundary
 var clippedPrecipitation = annualPrecipitation.clip(bangladesh);
 
-// Define visualization parameters
+// Define a high-contrast, easy-to-read visualization palette
 var precipitationVis = {
   min: 0,
-  max: 2000,
-  palette: ['white', 'blue', 'cyan', 'green', 'yellow', 'red']
+  max: 3500,  // Adjusted max for better color spread
+  palette: [
+    '#FFFFFF',  // Very Low - White (0 mm)
+    '#ADD8E6',  // Light Blue (400 mm)
+    '#0080FF',  // Blue (800 mm)
+    '#00FF00',  // Green (1200 mm)
+    '#FFFF00',  // Yellow (1600 mm)
+    '#FFA500',  // Orange (2000 mm)
+    '#FF4500',  // Red-Orange (2500 mm)
+    '#FF0000',  // Red (3000 mm)
+    '#800080',  // Purple (3200 mm)
+    '#4B0082'   // Dark Purple (3500+ mm)
+  ]
 };
 
-// Add the clipped precipitation layer to the map
-Map.addLayer(clippedPrecipitation, precipitationVis, 'Annual Precipitation (mm)');
+// Add the precipitation layer with improved visualization
+Map.addLayer(clippedPrecipitation, precipitationVis, 'Annual Rainfall (mm)');
 
-// Create a legend
+// Create a legend panel
 var legend = ui.Panel({
   style: {
     position: 'bottom-right',
-    padding: '8px 15px'
+    padding: '8px 15px',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)'
   }
 });
 
@@ -57,13 +69,16 @@ var makeLegend = function(colors, labels) {
 
 // Define legend colors and labels
 var legendColors = precipitationVis.palette;
-var legendLabels = ['0 mm', '400 mm', '800 mm', '1200 mm', '1600 mm', '2000+ mm'];
+var legendLabels = [
+  '0 mm (Dry)', '400 mm', '800 mm', '1200 mm', '1600 mm', 
+  '2000 mm', '2500 mm', '3000 mm', '3200 mm', '3500+ mm (Extreme Rainfall)'
+];
 
 // Add legend to the map
 legend.add(makeLegend(legendColors, legendLabels));
 Map.add(legend);
 
-// Create a chart of monthly precipitation
+// Create a monthly precipitation chart
 var monthlyPrecipitationChart = ui.Chart.image.seriesByRegion({
   imageCollection: chirps,
   regions: bangladesh,
@@ -83,3 +98,4 @@ var monthlyPrecipitationChart = ui.Chart.image.seriesByRegion({
 
 // Display the chart
 print(monthlyPrecipitationChart);
+

@@ -1,0 +1,85 @@
+// Load CHIRPS precipitation dataset
+var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
+  .filterDate('2024-01-01', '2024-12-31')
+  .select('precipitation');
+
+// Calculate the annual sum of precipitation
+var annualPrecipitation = chirps.sum();
+
+// Load FAO GAUL dataset for country boundaries
+var countries = ee.FeatureCollection("FAO/GAUL/2015/level0");
+
+// Filter for Bangladesh
+var bangladesh = countries.filter(ee.Filter.eq('ADM0_NAME', 'Bangladesh'));
+
+// Display Bangladesh boundary
+Map.centerObject(bangladesh, 6);
+Map.addLayer(bangladesh.style({color: 'red', width: 1}), {}, 'Bangladesh Boundary');
+
+// Clip the precipitation data to the Bangladesh boundary
+var clippedPrecipitation = annualPrecipitation.clip(bangladesh);
+
+// Define visualization parameters
+var precipitationVis = {
+  min: 0,
+  max: 2000,
+  palette: ['white', 'blue', 'cyan', 'green', 'yellow', 'red']
+};
+
+// Add the clipped precipitation layer to the map
+Map.addLayer(clippedPrecipitation, precipitationVis, 'Annual Precipitation (mm)');
+
+// Create a legend
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '8px 15px'
+  }
+});
+
+// Function to create legend entries
+var makeLegend = function(colors, labels) {
+  var legendPanel = ui.Panel({layout: ui.Panel.Layout.flow('vertical')});
+  for (var i = 0; i < colors.length; i++) {
+    var colorBox = ui.Label({
+      style: {
+        backgroundColor: colors[i],
+        padding: '8px',
+        margin: '4px',
+        width: '20px'
+      }
+    });
+    var label = ui.Label({value: labels[i], style: {margin: '4px'}});
+    legendPanel.add(ui.Panel([colorBox, label], ui.Panel.Layout.Flow('horizontal')));
+  }
+  return legendPanel;
+};
+
+// Define legend colors and labels
+var legendColors = precipitationVis.palette;
+var legendLabels = ['0 mm', '400 mm', '800 mm', '1200 mm', '1600 mm', '2000+ mm'];
+
+// Add legend to the map
+legend.add(makeLegend(legendColors, legendLabels));
+Map.add(legend);
+
+// Create a chart of monthly precipitation
+var monthlyPrecipitationChart = ui.Chart.image.seriesByRegion({
+  imageCollection: chirps,
+  regions: bangladesh,
+  reducer: ee.Reducer.mean(),
+  scale: 5000,
+  xProperty: 'system:time_start',
+  seriesProperty: 'ADM0_NAME'
+})
+.setOptions({
+  title: 'Monthly Precipitation in Bangladesh (2024)',
+  hAxis: {title: 'Date'},
+  vAxis: {title: 'Precipitation (mm)'},
+  lineWidth: 2,
+  pointSize: 4,
+  colors: ['blue']
+});
+
+// Display the chart
+print(monthlyPrecipitationChart);

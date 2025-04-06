@@ -1,0 +1,112 @@
+var bangladesh = ee.FeatureCollection("FAO/GAUL/2015/level1")
+  .filter(ee.Filter.eq('ADM0_NAME', 'Bangladesh'));
+
+var ndvi = ee.ImageCollection('MODIS/006/MOD13Q1')
+  .select('NDVI')
+  .filterBounds(bangladesh)
+  .filterDate('2001-01-01', '2024-01-01')
+  .map(function(img) {
+    return img.divide(10000).copyProperties(img, ['system:time_start']);
+  });
+
+// Set month/year
+var month = 4;   // April
+var year = 2020;
+
+var ndviMonth = ndvi.filter(ee.Filter.calendarRange(month, month, 'month'));
+
+var ndviMin = ndviMonth.reduce(ee.Reducer.min());
+var ndviMax = ndviMonth.reduce(ee.Reducer.max());
+
+
+var currentNDVI = ndvi
+  .filter(ee.Filter.calendarRange(year, year, 'year'))
+  .filter(ee.Filter.calendarRange(month, month, 'month'))
+  .mean();
+
+// Compute VCI
+var vci = currentNDVI
+  .subtract(ndviMin)
+  .divide(ndviMax.subtract(ndviMin))
+  .multiply(100)
+  .clip(bangladesh)
+  .rename('VCI');
+
+
+var vciVis = {
+  min: 0,
+  max: 100,
+  palette: ['brown', 'yellow', 'lightgreen', 'green']
+};
+
+// Add VCI to map
+Map.centerObject(bangladesh, 6);
+Map.addLayer(vci, vciVis, 'VCI - April 2020');
+
+// Legend
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+var legendTitle = ui.Label({
+  value: '🌿 VCI (Vegetation Condition Index)',
+  style: {fontWeight: 'bold', fontSize: '14px', margin: '0 0 4px 0'}
+});
+
+legend.add(legendTitle);
+
+// legend color bar
+var palette = vciVis.palette;
+var names = ['Drought', 'Stressed', 'Fair', 'Healthy'];
+
+for (var i = 0; i < palette.length; i++) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: palette[i],
+      padding: '8px',
+      margin: '0 4px 0 0'
+    }
+  });
+
+  var label = ui.Label({
+    value: names[i],
+    style: {margin: '0 0 4px 0'}
+  });
+
+  var row = ui.Panel({
+    widgets: [colorBox, label],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+
+  legend.add(row);
+}
+
+Map.add(legend);
+
+// ===== Add Description Panel =====
+var description = ui.Panel({
+  style: {
+    position: 'top-left',
+    padding: '10px',
+    width: '320px',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)'
+  }
+});
+
+description.add(ui.Label({
+  value: '🗺️ What This Map Shows:',
+  style: {fontWeight: 'bold', fontSize: '14px', margin: '0 0 6px 0'}
+}));
+
+description.add(ui.Label(
+  'This map shows the Vegetation Condition Index (VCI) for April 2020 in Bangladesh.\n\n' +
+  '- VCI compares current NDVI to past values for the same month.\n' +
+  '- Low VCI (brown/yellow): dry, drought-like vegetation.\n' +
+  '- High VCI (green): healthy vegetation.\n\n' +
+  'This helps monitor agricultural drought.'
+));
+
+Map.add(description);

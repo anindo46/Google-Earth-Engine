@@ -1,0 +1,30 @@
+//The code owner is ANINDO PAUL
+var dhaka = ee.FeatureCollection("projects/ee-anindo046/assets/Dhaka_City");
+
+var so2 = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_SO2')
+  .filterDate('2024-01-01', '2024-12-31')
+  .filterBounds(dhaka)
+  .select('SO2_column_number_density');
+
+var so2_mean = so2.mean().clip(dhaka);
+
+var visParams = {
+  min: 0.00002,
+  max: 0.0005,
+  palette: ['00FF00', 'FFFF00', 'FFA500', 'FF0000', '800000']
+};
+
+Map.centerObject(dhaka, 10);
+Map.addLayer(so2_mean, visParams, 'SO₂ Average (2024)');
+Map.addLayer(dhaka.style({color: 'black', fillColor: '00000000'}), {}, 'Dhaka Boundary');
+
+Export.image.toDrive({
+  image: so2_mean,
+  description: 'SO2_Dhaka_2024',
+  folder: 'EarthEngineExports', // change to your desired Drive folder name
+  fileNamePrefix: 'SO2_Dhaka_2024',
+  region: dhaka.geometry(),
+  scale: 1000,
+  maxPixels: 1e13,
+  fileFormat: 'GeoTIFF'
+});

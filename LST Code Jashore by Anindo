@@ -1,0 +1,106 @@
+// ---------------------------------------------------------------------
+// Land Surface Temperature (°C) using Landsat 8 TOA | Jashore | 2020 by ANindo 
+// ---------------------------------------------------------------------
+
+// 1. Load Jashore District boundary from GAUL (named "Jessore")
+var jashore = ee.FeatureCollection("FAO/GAUL/2015/level2")
+                 .filter(ee.Filter.eq('ADM2_NAME', 'Jessore'));
+Map.centerObject(jashore, 9);
+
+// 2. Load Landsat 8 TOA Image Collection for Apr–Jun 2020
+var landsat = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA")
+              .filterBounds(jashore)
+              .filterDate('2020-04-01', '2020-06-30')
+              .filter(ee.Filter.lt('CLOUD_COVER', 10))
+              .median()
+              .clip(jashore);
+
+// 3. Extract Thermal Infrared Band 10 and convert Kelvin to Celsius
+var thermalBand = landsat.select('B10');
+var lst = thermalBand.subtract(273.15).rename('LST_Celsius');
+
+// 4. Visualization settings
+var lstVis = {
+  min: 20,
+  max: 45,
+  palette: ['green', 'yellow', 'orange', 'red', 'darkred']
+};
+
+// 5. Display map layers
+Map.addLayer(lst, lstVis, 'LST (°C) Apr–Jun 2020');
+Map.addLayer(jashore, {color: 'black'}, "Jashore District");
+
+// 6. Export LST map to Google Drive
+Export.image.toDrive({
+  image: lst,
+  description: 'Jashore_LST_2020_LC08',
+  folder: 'GEE_Exports',
+  fileNamePrefix: 'Jashore_LST_2020_LC08',
+  scale: 30,
+  region: jashore.geometry(),
+  crs: 'EPSG:4326',
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+
+// 7. Legend Panel (🔥 Heat Color Scheme)
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-right',
+    padding: '10px',
+    backgroundColor: 'white',
+    border: '2px solid black',
+    width: '200px'
+  }
+});
+
+var legendTitle = ui.Label({
+  value: '🔥 Heat Intensity (°C)',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    margin: '0 auto 8px auto',
+    textAlign: 'center',
+    color: 'black'
+  }
+});
+
+var palette = ['green', 'yellow', 'orange', 'red', 'darkred'];
+var labels = ['< 20°C (Cool)', '25°C (Warm)', '30°C (Hot)', '35°C (Very Hot)', '> 40°C (Extreme)'];
+
+for (var i = 0; i < palette.length; i++) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: palette[i],
+      padding: '14px',
+      margin: '4px',
+      width: '30px',
+      height: '20px',
+      border: '1px solid black'
+    }
+  });
+
+  var label = ui.Label({
+    value: labels[i],
+    style: {
+      fontSize: '13px',
+      margin: '4px 4px',
+      fontWeight: 'bold',
+      color: palette[i] === 'darkred' ? 'white' : 'black'
+    }
+  });
+
+  var legendRow = ui.Panel({
+    widgets: [colorBox, label],
+    layout: ui.Panel.Layout.Flow('horizontal'),
+    style: {margin: '0 auto'}
+  });
+
+  legend.add(legendRow);
+}
+
+legend.add(legendTitle);
+Map.add(legend);
+
+// 8. Console log Code by Anindo
+print("✅ Jashore LST (Apr–Jun 2020) | Export Ready.");

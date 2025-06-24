@@ -1,0 +1,94 @@
+// =================================================================================
+// === Full LULC Supervised Classification Script for Anindo Paul Sourav's Research ===
+// =================================================================================
+
+//------------------------------------------------------------------------------------
+// STEP 1: YOUR IMPORTED DATA
+//------------------------------------------------------------------------------------
+// This top section should be automatically created by YOU using the 'Assets' tab.
+// 1. Delete any old 'var aoi = ...' lines.
+// 2. Go to the 'Assets' tab on the left.
+// 3. Find your asset (e.g., 'aoi') and click the '>' import arrow.
+// 4. Repeat for all 6 assets: aoi, waterbody, Living_Areas, Dense_Vegetation,
+//    Normal_Vegetation, and Bare_soil.
+// Your Imports section will look something like this when you are done:
+
+/*
+var aoi = ee.FeatureCollection("users/anindo046/...../aoi");
+var waterbody = ee.FeatureCollection("users/anindo046/...../waterbody");
+var Living_Areas = ee.FeatureCollection("users/anindo046/...../Living_Areas");
+var Dense_Vegetation = ee.FeatureCollection("users/anindo046/...../Dense_Vegetation");
+var Normal_Vegetation = ee.FeatureCollection("users/anindo046/...../Normal_Vegetation");
+var Bare_soil = ee.FeatureCollection("users/anindo046/...../Bare_soil");
+*/
+
+
+//------------------------------------------------------------------------------------
+// THE REST OF YOUR SCRIPT GOES BELOW THE IMPORTS
+//------------------------------------------------------------------------------------
+
+// Center the map on your area of interest for a better view.
+Map.centerObject(aoi, 12);
+
+// Function to prepare Landsat 8 Imagery (scaling and cloud masking)
+function prepSrL8(image) {
+  var qaMask = image.select('QA_PIXEL').bitwiseAnd(parseInt('11111', 2)).eq(0);
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  return image.addBands(opticalBands, null, true)
+    .updateMask(qaMask);
+}
+
+// Load, Filter, and Composite the Imagery for February 2015
+var landsat8_c2 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2');
+var imageCollection = landsat8_c2.filterDate('2015-02-01', '2015-02-28')
+                                 .filterBounds(aoi)
+                                 .map(prepSrL8);
+var image = imageCollection.median();
+Map.addLayer(image, {bands: ['SR_B4', 'SR_B3', 'SR_B2'], min: 0.0, max: 0.3}, 'Landsat 8 - Feb 2015');
+
+// Merge Your Training Data
+var trainingData = waterbody.map(function(feature) {
+  return feature.set({class: 0});
+}).merge(Living_Areas.map(function(feature) {
+  return feature.set({class: 1});
+})).merge(Dense_Vegetation.map(function(feature) {
+  return feature.set({class: 2});
+})).merge(Normal_Vegetation.map(function(feature) {
+  return feature.set({class: 3});
+})).merge(Bare_soil.map(function(feature) {
+  return feature.set({class: 4});
+}));
+
+// Define Bands and Train the Classifier
+var bands = ['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7'];
+var training = image.select(bands).sampleRegions({
+  collection: trainingData,
+  properties: ['class'],
+  scale: 30
+});
+var classifier = ee.Classifier.smileRandomForest(50).train({
+  features: training,
+  classProperty: 'class',
+  inputProperties: bands
+});
+
+// Classify the Image and Visualize the Result
+var classified = image.select(bands).classify(classifier);
+var palette = [
+  '#0000FF', // waterbody (blue)
+  '#FF0000', // Living_Areas (red)
+  '#006400', // Dense_Vegetation (dark green)
+  '#32CD32', // Normal_Vegetation (lime green)
+  '#D2B48C', // Bare_soil (tan)
+];
+Map.addLayer(classified, {min: 0, max: 4, palette: palette}, 'LULC Classification');
+
+// Export the Final LULC Map
+Export.image.toDrive({
+  image: classified,
+  description: 'LULC_2015_Classification_Research',
+  folder: 'GEE_Exports',
+  scale: 30,
+  region: aoi,
+  maxPixels: 1e10
+});

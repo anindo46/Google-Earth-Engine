@@ -1,0 +1,90 @@
+// ===================================================================
+// ===   Full LULC Classification Script for 1995 (Corrected)      ===
+// ===================================================================
+
+// Your drawn polygon should be imported automatically by GEE above this line
+// as 'aoi'. Your other training data should also be imported.
+
+// Step 1: Center the map on your drawn Area of Interest
+Map.centerObject(aoi);
+
+// Step 2: Create a Function to Prepare Landsat 5 Imagery
+function prepSrL5(image) {
+  var qaMask = image.select('QA_PIXEL').bitwiseAnd(parseInt('11111', 2)).eq(0);
+  var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+  return image.addBands(opticalBands, null, true).updateMask(qaMask);
+}
+
+// Step 3: Find and Display the 1995 Satellite Image
+var image = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2')
+              .filterDate('1995-01-01', '1995-03-31')
+              .filterBounds(aoi)
+              .filter(ee.Filter.lt('CLOUD_COVER', 5))
+              .map(prepSrL5)
+              .median()
+              .clip(aoi);
+Map.addLayer(image, {bands: ['SR_B3', 'SR_B2', 'SR_B1'], min: 0.0, max: 0.3}, 'True Color Image - 1995');
+
+// Step 4: Merge Your Training Data
+var trainingData = waterbody.map(function(feature) {
+  return feature.set({class: 0});
+}).merge(Living_Area.map(function(feature) {
+  return feature.set({class: 1});
+})).merge(Dense_vegtation.map(function(feature) {
+  return feature.set({class: 2});
+})).merge(low_vegetation.map(function(feature) {
+  return feature.set({class: 3});
+})).merge(bare_soil.map(function(feature) {
+  return feature.set({class: 4});
+}));
+
+// Step 5: Train the Classifier
+var bands = ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7'];
+var training = image.select(bands).sampleRegions({
+  collection: trainingData,
+  properties: ['class'],
+  scale: 30
+});
+var classifier = ee.Classifier.smileRandomForest(50).train({
+  features: training,
+  classProperty: 'class',
+  inputProperties: bands
+});
+
+// Step 6: Classify the Image and Create a Palette
+var classified = image.select(bands).classify(classifier);
+var palette = [
+  '#0000FF', '#FF0000', '#006400', '#32CD32', '#A52A2A'
+];
+Map.addLayer(classified, {min: 0, max: 4, palette: palette}, 'LULC Classification 1995');
+
+// Step 7: Calculate and Print the Area of Each Class (Corrected)
+var areaAndClass = ee.Image.pixelArea().addBands(classified);
+var areaByClass = areaAndClass.reduceRegion({
+  reducer: ee.Reducer.sum().group({ groupField: 1, groupName: 'class' }),
+  geometry: aoi,
+  scale: 30,
+  maxPixels: 1e10
+});
+var classAreaList = ee.List(areaByClass.get('groups'));
+var classNames = ['Waterbody', 'Living Area', 'Dense Vegetation', 'Low Vegetation', 'Bare Soil'];
+var readableAreaList = classAreaList.map(function(item) {
+  var areaDict = ee.Dictionary(item);
+  var classNumber = ee.Number(areaDict.get('class'));
+  var area = ee.Number(areaDict.get('sum'));
+  return ee.Dictionary({
+    'Class Name': ee.List(classNames).get(classNumber),
+    'Area (Hectares)': area.divide(10000)
+  });
+});
+print('Area Report for 1995 (Hectares)', readableAreaList);
+
+// Step 8: Export the Map to Google Drive
+Export.image.toDrive({
+  image: classified,
+  description: 'LULC_Classification_1995',
+  folder: 'GEE_Exports',
+  scale: 30,
+  region: aoi,
+  maxPixels: 1e13
+});

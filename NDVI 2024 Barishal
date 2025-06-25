@@ -1,0 +1,178 @@
+// Title: NDVI for Barishal District, Bangladesh (2024)
+// Author: Gemini
+// Date: 2024-06-26
+// Description: This script calculates the Normalized Difference Vegetation Index (NDVI)
+// for the Barishal district in Bangladesh for the year 2024 using Sentinel-2 imagery.
+
+//----------------------------------------------------------------------------------
+// 1. DEFINE THE AREA OF INTEREST (AOI)
+//----------------------------------------------------------------------------------
+
+// Load the FAO GAUL dataset for administrative boundaries.
+// We use Level 2 for districts in Bangladesh.
+var adminBoundaries = ee.FeatureCollection('FAO/GAUL/2015/level2');
+
+// Filter the boundaries to get the specific feature for Barishal District.
+// Note: The dataset uses the spelling "Barisal".
+var aoi = adminBoundaries.filter(ee.Filter.and(
+  ee.Filter.eq('ADM0_NAME', 'Bangladesh'),
+  ee.Filter.eq('ADM2_NAME', 'Barisal')
+));
+
+// Center the map view on the Area of Interest.
+Map.centerObject(aoi, 9); // Zoom level 9 is good for a district view.
+Map.addLayer(aoi, {color: 'yellow'}, 'Barishal District Boundary', false); // Add boundary as a layer, turned off by default.
+
+
+//----------------------------------------------------------------------------------
+// 2. SELECT AND FILTER SATELLITE IMAGERY
+//----------------------------------------------------------------------------------
+
+// Define the date range for the entire year of 2024.
+var startDate = '2024-01-01';
+var endDate = '2024-12-31';
+
+// Use the Sentinel-2 Harmonized Surface Reflectance collection.
+var s2Collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+    // Filter by the date range.
+    .filterDate(startDate, endDate)
+    // Filter to the bounds of our AOI.
+    .filterBounds(aoi)
+    // Filter for images with low cloud cover (e.g., less than 20%).
+    // This is a key step for accuracy.
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20));
+
+// A function to mask clouds using the 'SCL' (Scene Classification Layer) band.
+function maskS2Clouds(image) {
+  var scl = image.select('SCL');
+  // Keep pixels that are not classified as clouds (medium/high probability),
+  // cloud shadows, or cirrus.
+  // Values to keep: 4 (vegetation), 5 (not vegetated), 6 (water), 7 (unclassified)
+  var mask = scl.neq(3)  // Cloud shadows
+             .and(scl.neq(8)) // Cloud medium probability
+             .and(scl.neq(9)) // Cloud high probability
+             .and(scl.neq(10)); // Cirrus
+  return image.updateMask(mask).divide(10000)
+      .select("B.*")
+      .copyProperties(image, ["system:time_start"]);
+}
+
+// Apply the cloud mask function to every image in the collection.
+var maskedCollection = s2Collection.map(maskS2Clouds);
+
+// Create a single, cloud-free composite image for the year.
+// A median composite is robust against outliers (e.g., remaining clouds, shadows).
+var compositeImage = maskedCollection.median();
+
+// Clip the composite image to the exact boundary of the AOI.
+var clippedComposite = compositeImage.clip(aoi);
+
+
+//----------------------------------------------------------------------------------
+// 3. CALCULATE NDVI
+//----------------------------------------------------------------------------------
+
+// The NDVI formula is (NIR - Red) / (NIR + Red).
+// For Sentinel-2, NIR is band 'B8' and Red is band 'B4'.
+// We use the built-in normalizedDifference() function for convenience.
+var ndvi = clippedComposite.normalizedDifference(['B8', 'B4']).rename('NDVI');
+
+
+//----------------------------------------------------------------------------------
+// 4. VISUALIZE THE RESULTS
+//----------------------------------------------------------------------------------
+
+// Define a color palette for the NDVI layer.
+// Browns/Tans = Bare soil, low vegetation, or water
+// Yellows/Greens = Increasing vegetation density/health
+var ndviPalette = [
+  '#a52a2a', // Brown (low NDVI)
+  '#ffffbf', // Yellow
+  '#d9ef8b', // Light Green
+  '#66bd63', // Medium Green
+  '#1a9850', // Dark Green
+  '#006837'  // Very Dark Green (high NDVI)
+];
+
+// Define the visualization parameters for the NDVI layer.
+var ndviVisParams = {
+  min: 0.0,
+  max: 0.8,
+  palette: ndviPalette
+};
+
+// Add the final NDVI layer to the map.
+Map.addLayer(ndvi, ndviVisParams, 'NDVI Barishal 2024');
+
+
+//----------------------------------------------------------------------------------
+// 5. ADD A LEGEND TO THE MAP
+//----------------------------------------------------------------------------------
+
+// Creates a panel to hold the legend.
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Creates a title for the legend.
+var legendTitle = ui.Label({
+  value: 'NDVI',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '18px',
+    margin: '0 0 4px 0',
+    padding: '0'
+    }
+});
+legend.add(legendTitle);
+
+// Creates a color bar thumbnail image for the legend.
+var colorBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(0).visualize(ndviVisParams),
+  params: {bbox: '0,0,1,0.1', dimensions: '100x10'},
+  style: {stretch: 'horizontal', margin: '0 0 4px 0'},
+});
+legend.add(colorBar);
+
+// Creates a panel with labels for the min and max values.
+var legendLabels = ui.Panel({
+  widgets: [
+    ui.Label(ndviVisParams.min, {margin: '4px 8px'}),
+    ui.Label(
+        ((ndviVisParams.max-ndviVisParams.min) / 2+ndviVisParams.min),
+        {margin: '4px 8px', textAlign: 'center', stretch: 'horizontal'}),
+    ui.Label(ndviVisParams.max, {margin: '4px 8px'})
+  ],
+  layout: ui.Panel.Layout.flow('horizontal')
+});
+legend.add(legendLabels);
+
+// Add the complete legend to the map UI.
+Map.add(legend);
+
+
+
+
+
+
+
+//----------------------------------------------------------------------------------
+
+// This section defines the export task.
+// To run it, go to the 'Tasks' tab in the upper right of the GEE interface
+// and click the 'RUN' button next to the task name.
+
+Export.image.toDrive({
+  image: ndvi, // Export the raw NDVI data, not the visualized image.
+  description: 'NDVI_Barishal_2024', // The filename for the exported file.
+  folder: 'GEE_Exports', // A folder in your Google Drive to save the file.
+  fileNamePrefix: 'NDVI_Barishal_2024', // Redundant, but good practice.
+  scale: 10, // Sentinel-2 resolution for these bands is 10 meters.
+  region: aoi.geometry(), // Export only the area of interest.
+  maxPixels: 1e13, // A large number to allow for large exports.
+  fileFormat: 'GeoTIFF'
+});
+

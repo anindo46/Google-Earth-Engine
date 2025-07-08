@@ -1,0 +1,157 @@
+// Title:       Final LULC Time Series Script for 2025
+// Description: This script creates a Landsat composite for a user-drawn ROI,
+//              trains a Random Forest classifier using user-defined training points,
+//              and generates a final LULC map for 2025.
+// Author:      Anindo Paul Sourav (Final version)
+// ROI:         User-drawn polygon (imported as 'roiAsset')
+// Date:        January 1 - March 31, 2025
+
+//================================================================================
+// 1. SETUP: AOI & PARAMETERS
+//================================================================================
+
+// The script will use your drawn polygon, which is imported as 'roiAsset'.
+// Center the map view on your drawn polygon.
+Map.centerObject(roiAsset, 11);
+
+// Define the time period to match your previous years' analysis.
+var startDate = '2025-01-01';
+var endDate = '2025-03-31';
+
+//================================================================================
+// 2. IMAGE PRE-PROCESSING
+//================================================================================
+
+/**
+ * Function to mask clouds and shadows in Landsat 8/9 Collection 2 Level-2 data.
+ * @param {ee.Image} image A Landsat 8/9 image with a 'QA_PIXEL' band.
+ * @return {ee.Image} A cloud-masked image.
+ */
+function maskL8L9sr(image) {
+  // Select the pixel quality band.
+  var qa = image.select('QA_PIXEL');
+  // Define cloud and shadow bitmasks.
+  var cloudMask = 1 << 3;
+  var cloudShadowMask = 1 << 4;
+  // Create a mask where both cloud and shadow bits are 0 (clear).
+  var mask = qa.bitwiseAnd(cloudMask).eq(0)
+      .and(qa.bitwiseAnd(cloudShadowMask).eq(0));
+  // Apply the mask, scale the data, and copy properties.
+  return image.updateMask(mask)
+      .select('SR_B.*').multiply(0.0000275).add(-0.2)
+      .copyProperties(image, ["system:time_start"]);
+}
+
+// Load Landsat 9 & 8 data and merge them.
+var l9 = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2').filterDate(startDate, endDate).filterBounds(roiAsset);
+var l8 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2').filterDate(startDate, endDate).filterBounds(roiAsset);
+var mergedCollection = l8.merge(l9);
+
+// Filter and mask the collection.
+var filteredCollection = mergedCollection.filter(ee.Filter.lt('CLOUD_COVER', 5));
+var cloudMaskedCollection = filteredCollection.map(maskL8L9sr);
+
+// Create the median composite image.
+var medianComposite = cloudMaskedCollection.median();
+var clippedComposite = medianComposite.clip(roiAsset);
+
+//================================================================================
+// 3. CALCULATE INDICES & CREATE ANALYSIS-READY IMAGE
+//================================================================================
+
+// Calculate NDVI: (NIR - Red) / (NIR + Red)
+var ndvi = clippedComposite.normalizedDifference(['SR_B5', 'SR_B4']).rename('NDVI');
+// Calculate NDWI: (Green - NIR) / (Green + NIR)
+var ndwi = clippedComposite.normalizedDifference(['SR_B3', 'SR_B5']).rename('NDWI');
+
+// Add the indices as bands to the composite.
+var lulcReadyComposite = clippedComposite.addBands(ndvi).addBands(ndwi);
+
+//================================================================================
+// 4. PREPARE TRAINING DATA
+//================================================================================
+
+// Assign a unique numerical ID to each class for the classifier.
+Waterbody = Waterbody.map(function(feature) { return feature.set({class: 0}); });
+Living_land = Living_land.map(function(feature) { return feature.set({class: 1}); });
+Dense_Vegetation = Dense_Vegetation.map(function(feature) { return feature.set({class: 2}); });
+Normal_Vegetation = Normal_Vegetation.map(function(feature) { return feature.set({class: 3}); });
+Bare_Soil = Bare_Soil.map(function(feature) { return feature.set({class: 4}); });
+
+// Merge all training points into one collection.
+var trainingData = Waterbody
+  .merge(Living_land)
+  .merge(Dense_Vegetation)
+  .merge(Normal_Vegetation)
+  .merge(Bare_Soil);
+
+// Define the bands to use for training.
+var trainingBands = ['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7', 'NDVI', 'NDWI'];
+
+// Extract spectral data for each training point.
+var trainingPixels = lulcReadyComposite.select(trainingBands)
+  .sampleRegions({
+    collection: trainingData,
+    properties: ['class'],
+    scale: 30
+});
+
+//================================================================================
+// 5. TRAIN CLASSIFIER & CLASSIFY IMAGE
+//================================================================================
+
+// Train a Random Forest classifier.
+var classifier = ee.Classifier.smileRandomForest(50)
+  .train({
+    features: trainingPixels,
+    classProperty: 'class',
+    inputProperties: trainingBands
+  });
+
+// Classify the composite image.
+var classifiedImage = lulcReadyComposite.select(trainingBands).classify(classifier);
+
+//================================================================================
+// 6. VISUALIZE RESULTS
+//================================================================================
+
+// Define visualization parameters for the true-color composite.
+var visParamsTrueColor = {bands: ['SR_B4', 'SR_B3', 'SR_B2'], min: 0.0, max: 0.3, gamma: 1.4};
+// Add the input image to the map.
+Map.addLayer(lulcReadyComposite, visParamsTrueColor, 'True Color Composite (2025)');
+
+// Define a color palette for the LULC map.
+var lulcPalette = ['#0000FF', '#FF0000', '#006400', '#32CD32', '#A0522D'];
+// Add the final classified map to the viewer.
+Map.addLayer(classifiedImage, {min: 0, max: 4, palette: lulcPalette}, 'LULC Map 2025');
+
+// Add a map legend.
+var legend = ui.Panel({style: {position: 'bottom-left', padding: '8px 15px'}});
+var legendTitle = ui.Label({value: 'LULC Classes 2025', style: {fontWeight: 'bold', fontSize: '18px', margin: '0 0 4px 0', padding: '0'}});
+legend.add(legendTitle);
+var makeRow = function(color, name) {
+  var colorBox = ui.Label({style: {backgroundColor: '#' + color, padding: '8px', margin: '0 0 4px 0'}});
+  var description = ui.Label({value: name, style: {margin: '0 0 4px 6px'}});
+  return ui.Panel({widgets: [colorBox, description], layout: ui.Panel.Layout.Flow('horizontal')});
+};
+var classNames = ['Waterbody', 'Urban/Built-up', 'Dense Vegetation', 'Normal Vegetation', 'Bare Soil'];
+var paletteForLegend = ['0000FF', 'FF0000', '006400', '32CD32', 'A0522D'];
+for (var i = 0; i < classNames.length; i++) {
+  legend.add(makeRow(paletteForLegend[i], classNames[i]));
+}
+Map.add(legend);
+
+//================================================================================
+// 7. EXPORT THE FINAL MAP
+//================================================================================
+// Uncomment this section and run the script again to start the export.
+
+Export.image.toDrive({
+  image: classifiedImage,                     // Exporting the classified LULC map.
+  description: 'LULC_Map_2025_DrawnROI',      // Name of the export task.
+  folder: 'GEE_Exports',                      // Optional: A folder in your Google Drive.
+  fileNamePrefix: 'LULC_Map_2025_DrawnROI',   // Filename for the GeoTIFF.
+  scale: 30,                                  // The spatial resolution in meters.
+  region: roiAsset,                           // The region to export (FIXED).
+  maxPixels: 1e11
+});
